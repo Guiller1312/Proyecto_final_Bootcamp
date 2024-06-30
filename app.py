@@ -1,5 +1,4 @@
 import pandas as pd
-from sklearn.metrics import classification_report, accuracy_score
 import streamlit as st
 import plotly.express as px
 import matplotlib.pyplot as plt
