@@ -1,200 +1,347 @@
-import pandas as pd
 import streamlit as st
-import plotly.express as px
+import pandas as pd
+import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 import seaborn as sns
-import pickle
+import numpy as np
+import statsmodels.api as sm
+import plotly.express as px
+
+
+partes = []
+
+num_partes = 6
+
+# Leer cada parte y almacenarla en la lista
+for i in range(1, num_partes + 1):
+    parte_df = pd.read_csv(f'df_EDA{i}.csv')
+    partes.append(parte_df)
+
+# Concatenar todos los DataFrames en uno solo
+df = pd.concat(partes, ignore_index=True)
+df['PrimaryDiagnosisCodePrincipal'] = df['PrimaryDiagnosisCode'].str.split('.').str[0]
+
+
+#def cargar_datos():
+#df = pd.read_csv('df_EDA.csv', delimiter=',', on_bad_lines='skip', engine='python')
+#df['PrimaryDiagnosisCodePrincipal'] = df['PrimaryDiagnosisCode'].str.split('.').str[0]
+#return df
+
+def capitulos_genero(df):
+    grouped = df.groupby(['PatientGender', 'PrimaryDiagnosisChapter']).size().unstack(fill_value=0)
+    female_values = grouped.loc['Female'] if 'Female' in grouped.index else pd.Series()
+    male_values = grouped.loc['Male'] if 'Male' in grouped.index else pd.Series()
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(
+        x=female_values,
+        y=male_values,
+        mode='markers',
+        marker=dict(
+            size=15,
+            color=female_values + male_values,
+            colorscale='Viridis',
+            showscale=True
+        ),
+        text=female_values.index,
+        hovertemplate='<b>Código: %{text}</b><br>Mujeres: %{x}<br>Hombres: %{y}<extra></extra>'
+    ))
+
+    max_value = max(grouped.max().max(), 1)
+    fig.add_trace(go.Scatter(
+        x=[0, max_value],
+        y=[0, max_value],
+        mode='lines',
+        line=dict(color='red', dash='dash'),
+        name='Línea de igualdad'
+    ))
+
+    fig.update_layout(
+        title='Frecuencia de diagnóstico por capítulos, distribuido por género.',
+        xaxis_title='Frecuencia en Mujeres',
+        yaxis_title='Frecuencia en Hombres',
+        #height=800,
+        #width=1000,
+        hovermode='closest'
+    )
+
+    st.plotly_chart(fig)
+
+def capitulos_edad(df):
+    def asignar_rango_edad(edad):
+        inicio = (edad // 10) * 10
+        return f"{inicio:03d}-{inicio + 9:03d}"
+
+    df['Rango_Edad'] = df['Edad'].apply(asignar_rango_edad)
+    grouped = df.groupby(['Rango_Edad', 'PrimaryDiagnosisChapter']).size().unstack(fill_value=0)
+    grouped = grouped.sort_index()
+    grouped.columns = pd.to_numeric(grouped.columns, errors='coerce')
+    grouped = grouped.reindex(columns=sorted(grouped.columns))
+    total_freq = grouped.sum().sort_values(ascending=False)
+    grouped = grouped[total_freq.index]
+
+    fig, ax = plt.subplots(figsize=(14, 8))
+    grouped.plot(kind='bar', stacked=True, ax=ax)
+    ax.set_title('Frecuencia de PrimaryDiagnosisChapter por Rangos de Edad')
+    ax.set_ylabel('Rango de Edad')
+    ax.set_xlabel('Frecuencia')
+    ax.legend(title='PrimaryDiagnosisChapter', bbox_to_anchor=(1.05, 1), loc='upper left')
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=45)
+    st.pyplot(fig)
+
+def cap2_genero_civil(df):
+    filtered_df = df[df['PrimaryDiagnosisChapter'] == 2]
+    frequency_df = filtered_df.groupby(['PatientGender', 'PatientMaritalStatus']).size().reset_index(name='Count')
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    sns.barplot(data=frequency_df, x='PatientGender', y='Count', hue='PatientMaritalStatus', ax=ax)
+    ax.set_title('Frecuencia absoluta de Estado Civil del Paciente por Género del Paciente (PrimaryDiagnosisChapter = 2)')
+    ax.set_xlabel('Género del Paciente')
+    ax.set_ylabel('Frecuencia')
+    ax.legend(title='Estado Civil del Paciente')
+    st.pyplot(fig)
+
+def frecuencia_cap_genero(df):
+    fig, ax = plt.subplots(figsize=(14, 8))
+    sns.countplot(x='PrimaryDiagnosisChapter', hue='PatientGender', data=df, palette='muted', ax=ax)
+    ax.set_title('Frecuencia de Diagnósticos por Género')
+    ax.set_xlabel('Capítulo de Diagnóstico')
+    ax.set_ylabel('Frecuencia')
+    ax.legend(title='Género del Paciente')
+    st.pyplot(fig)
+
+def frecuencia_cap_raza(df):
+    fig, ax = plt.subplots(figsize=(14, 8))
+    sns.countplot(x='PrimaryDiagnosisChapter', hue='PatientRace', data=df, palette='muted', ax=ax)
+    ax.set_title('Frecuencia de Diagnósticos por Raza')
+    ax.set_xlabel('Capítulo de Diagnóstico')
+    ax.set_ylabel('Frecuencia')
+    ax.legend(title='Raza del Paciente')
+    st.pyplot(fig)
+
+def subplot_frecuencia_cap_raza_civil_gen(df):
+    filtered_df = df[df['PrimaryDiagnosisChapter'] == 2]
+    frequency_df = filtered_df.groupby(['PatientGender', 'PatientMaritalStatus', 'PatientRace']).size().reset_index(name='Count')
+
+    g = sns.catplot(
+        data=frequency_df, 
+        x='PatientGender', 
+        y='Count', 
+        hue='PatientMaritalStatus', 
+        col='PatientRace', 
+        kind='bar', 
+        height=4, 
+        aspect=0.7
+    )
+
+    g.set_axis_labels("Género del Paciente", "Frecuencia")
+    g.set_titles("{col_name}")
+    g.despine(left=True)
+    for ax in g.axes.flat:
+        for label in ax.get_xticklabels():
+            label.set_rotation(45)
+    st.pyplot(g.fig)
+
+def box_plot_edad_cap_civil(df):
+    fig, ax = plt.subplots(figsize=(14, 8))
+    sns.boxplot(x='PrimaryDiagnosisChapter', y='Edad', hue='PatientMaritalStatus', data=df, palette='muted', ax=ax)
+    ax.set_title('Distribución de Edad por Capítulo de Diagnóstico y Estado Civil')
+    ax.set_xlabel('Capítulo de Diagnóstico')
+    ax.set_ylabel('Edad')
+    ax.legend(title='Estado Civil del Paciente')
+    st.pyplot(fig)
+
+def bar_plot_diagnosis_code(df):
+    chapters = sorted(df['PrimaryDiagnosisChapter'].unique())
+    selected_chapter = st.selectbox('Selecciona el capítulo de diagnóstico:', chapters, key='selectbox1')
+
+    # Filtrar el DataFrame basado en la selección
+    df_filtered = df[df['PrimaryDiagnosisChapter'] == selected_chapter]
+    df_filtered['PrimaryDiagnosisCodePrincipal'] = df_filtered['PrimaryDiagnosisCode'].str.split('.').str[0]
+    code_counts = df_filtered['PrimaryDiagnosisCodePrincipal'].value_counts()
+    df_code_counts = code_counts.reset_index()
+    df_code_counts.columns = ['PrimaryDiagnosisCodePrincipal', 'Frequency']
+
+    fig, ax = plt.subplots(figsize=(12, 7))
+    sns.barplot(data=df_code_counts, x='PrimaryDiagnosisCodePrincipal', y='Frequency', palette='viridis', ax=ax)
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=90)
+    ax.set_title('Distribución de PrimaryDiagnosisCodePrincipal')
+    ax.set_xlabel('PrimaryDiagnosisCodePrincipal')
+    ax.set_ylabel('Frecuencia')
+    st.pyplot(fig)
+def top10_capX(df):
+    
+    # Cargar el archivo CSV con códigos y descripciones
+    codigo_descripcion = pd.read_csv('CIE10.csv', header=None, names=['Codigo', 'Descripcion'], sep='\t')
+
+    # Crear un desplegable para seleccionar el capítulo
+    chapters = sorted(df['PrimaryDiagnosisChapter'].unique())
+    selected_chapter = st.selectbox('Selecciona el capítulo de diagnóstico:', chapters)
+
+    # Filtrar el DataFrame basado en la selección
+    df_filtered = df[df['PrimaryDiagnosisChapter'] == selected_chapter]
+
+    # Procesar los códigos
+    df_filtered['PrimaryDiagnosisCodePrincipal'] = df_filtered['PrimaryDiagnosisCode'].str.split('.').str[0]
+    code_counts = df_filtered['PrimaryDiagnosisCodePrincipal'].value_counts()
+    top_10_codes = code_counts.head(10)
+
+    # Crear DataFrame con los top 10 códigos y sus frecuencias
+    df_top_10_code_counts = top_10_codes.reset_index()
+    df_top_10_code_counts.columns = ['PrimaryDiagnosisCodePrincipal', 'Frequency']
+
+    # Unir con las descripciones
+    df_top_10_code_counts = df_top_10_code_counts.merge(
+        codigo_descripcion, 
+        left_on='PrimaryDiagnosisCodePrincipal', 
+        right_on='Descripcion', 
+        how='left'
+    )
+
+    # Mostrar la tabla con códigos, frecuencias y descripciones
+    st.write(df_top_10_code_counts[['PrimaryDiagnosisCodePrincipal', 'Frequency', 'Descripcion']])
+
+    # Crear el gráfico
+    fig, ax = plt.subplots(figsize=(12, 7))
+    sns.barplot(data=df_top_10_code_counts, x='PrimaryDiagnosisCodePrincipal', y='Frequency', ax=ax)
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=90)
+    ax.set_title(f'10 Códigos de Diagnóstico Principal Más Frecuentes - Capítulo {selected_chapter}')
+    ax.set_xlabel('PrimaryDiagnosisCodePrincipal')
+    ax.set_ylabel('Frecuencia')
+    st.pyplot(fig)
+
+def top10_cap2(df):
+    codigo_descripcion = pd.read_csv('CIE10.csv', header=None, names=['Codigo', 'Descripcion'])
+    codigo_descripcion_dict = codigo_descripcion.set_index('Codigo')['Descripcion'].to_dict()
+    
+    
+    # Crear un desplegable para seleccionar el capítulo
+    chapters = sorted(df['PrimaryDiagnosisChapter'].unique())
+    selected_chapter = st.selectbox('Selecciona el capítulo de diagnóstico:', chapters, key='selectbox2')
+
+    # Filtrar el DataFrame basado en la selección
+    df_filtered = df[df['PrimaryDiagnosisChapter'] == selected_chapter]
+
+    #df_filtered = df[df['PrimaryDiagnosisChapter'] == 2]
+    df_filtered['PrimaryDiagnosisCodePrincipal'] = df_filtered['PrimaryDiagnosisCode'].str.split('.').str[0]
+    code_counts = df_filtered['PrimaryDiagnosisCodePrincipal'].value_counts()
+    top_10_codes = code_counts.head(10)
+    # Crear df_top_10_code_counts
+    df_top_10_code_counts = top_10_codes.reset_index()
+    df_top_10_code_counts.columns = ['PrimaryDiagnosisCodePrincipal', 'Frequency']
+
+    # Añadir la columna 'Descripcion'
+    df_top_10_code_counts['Descripcion'] = df_top_10_code_counts['PrimaryDiagnosisCodePrincipal'].map(codigo_descripcion_dict)
+    
+    #valor = codigo_descripcion_dict['{selected_chapter}']
+    
+    fig, ax = plt.subplots(figsize=(12, 7))
+    sns.barplot(data=df_top_10_code_counts, x='PrimaryDiagnosisCodePrincipal', y='Frequency', ax=ax)
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=90)
+    ax.set_title('10 Códigos de Diagnóstico Principal Más Frecuentes')
+    #ax.set_title(f'10 Códigos de Diagnóstico Principal Más Frecuentes - Capítulo 2: Neoplasia, Tumores y Cáncer{valor}')
+    ax.set_xlabel('PrimaryDiagnosisCodePrincipal')
+    ax.set_ylabel('Frecuencia')
+    st.pyplot(fig)
+
+    st.dataframe(df_top_10_code_counts)
+
+def line_plot_admissions_over_time(df):
+    df['AdmissionStartDate'] = pd.to_datetime(df['AdmissionStartDate'], format='%Y-%m-%d %H:%M:%S.%f')
+    df_c92 = df[df['PrimaryDiagnosisCodePrincipal'] == 'C92']
+    df_c92['AdmissionStartDate'] = df_c92['AdmissionStartDate'].dt.to_period('M')
+    admissions_per_month = df_c92.groupby('AdmissionStartDate').size()
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+    admissions_per_month.plot(kind='line', marker='o', linestyle='-', ax=ax)
+    ax.set_title('Evolución del Número de Admisiones con Diagnóstico C92 a lo Largo del Tiempo')
+    ax.set_xlabel('Fecha (Año-Mes)')
+    ax.set_ylabel('Número de Admisiones')
+    ax.grid(True)
+    st.pyplot(fig)
+
+def leucemia_tiempo(df):
+    df['AdmissionStartDate'] = pd.to_datetime(df['AdmissionStartDate'], format='%Y-%m-%d %H:%M:%S.%f')
+    df_c92 = df[df['PrimaryDiagnosisCodePrincipal'] == 'C92']
+    df_c92['AdmissionStartDate'] = df_c92['AdmissionStartDate'].dt.to_period('M')
+    admissions_per_month = df_c92.groupby('AdmissionStartDate').size().reset_index(name='Number of Admissions')
+    admissions_per_month['AdmissionStartDate'] = admissions_per_month['AdmissionStartDate'].dt.to_timestamp()
+
+    fig = px.bar(
+        admissions_per_month,
+        x='AdmissionStartDate',
+        y='Number of Admissions',
+        title='Evolución del Número de Admisiones con Diagnóstico C92 (Leucemia) a lo Largo del Tiempo',
+        labels={'AdmissionStartDate': 'Fecha (Año-Mes)', 'Number of Admissions': 'Número de Admisiones'},
+    )
+    st.plotly_chart(fig)
+
+def line_plot_admissions_trend(df):
+    df['AdmissionStartDate'] = pd.to_datetime(df['AdmissionStartDate'], format='%Y-%m-%d %H:%M:%S.%f')
+    df_c92 = df[df['PrimaryDiagnosisCodePrincipal'] == 'C92'].copy()
+    df_c92['AdmissionStartDate'] = df_c92['AdmissionStartDate'].dt.to_period('M')
+    admissions_per_month = df_c92.groupby('AdmissionStartDate').size().reset_index(name='Number of Admissions')
+    admissions_per_month['AdmissionStartDate'] = admissions_per_month['AdmissionStartDate'].dt.to_timestamp()
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(
+        x=admissions_per_month['AdmissionStartDate'],
+        y=admissions_per_month['Number of Admissions'],
+        mode='lines+markers',
+        name='Número de Admisiones',
+        line=dict(color='darkgreen'),
+        marker=dict(size=6)
+    ))
+
+    x = np.arange(len(admissions_per_month))
+    y = admissions_per_month['Number of Admissions']
+    lowess = sm.nonparametric.lowess(y, x, frac=0.2)
+
+    fig.add_trace(go.Scatter(
+        x=admissions_per_month['AdmissionStartDate'],
+        y=lowess[:, 1],
+        mode='lines',
+        name='Tendencia (LOWESS)',
+        line=dict(color='yellow')
+    ))
+
+    fig.update_layout(
+        title='Tendencia del Número de Admisiones con Diagnóstico C92 (Leucemia) a lo Largo del Tiempo',
+        xaxis_title='Fecha (Año-Mes)',
+        yaxis_title='Número de Admisiones',
+        template='seaborn',
+        xaxis=dict(tickformat='%Y-%m')
+    )
+
+    st.plotly_chart(fig)
 
 def main():
-    
-    # st.title("Análisis de Diagnóstico Médico")
+    st.title('ESTUDIO DIAGNÓSTICOS CLÍNICOS (CIE-10)')
+    st.write('Se ha realizado un estudio de diagnósticos clínicos basado en los resultados clasificados por el método CIE-10, Clasificación Internacional de Enfermedades. El CIE-10 es un sistema de codificación que permite registrar de manera estandarizada las enfermedades y problemas de salud, facilitando la comunicación entre profesionales de la salud y la comparación de datos a nivel mundial. En este estudio, se analizan los diagnósticos clínicos utilizando esta clasificación para identificar patrones y tendencias.')
+    capitulos_genero(df)
+    st.write('En este gráfico se muestra la distribución de diagnósticos en los veintiún capítulos, desglosados por género. La mayoría de los capítulos presentan un número de diagnósticos por debajo de los doce mil pacientes, tanto en hombres como en mujeres, mostrando una alineación notable entre ambos géneros. Los capítulos que sobresalen son el capítulo 2, que aborda las neoplasias (tumores y cáncer) y en algo de menor impacto el capítulo 13, relacionado con enfermedades del sistema osteomuscular y del tejido conectivo. Además, podemos observar una mayor frecuencia de diagnóstico en el caso de mujeres, como también se puede ver en el siguiente gráfico:')
+    frecuencia_cap_genero(df)
+    st.title('Frecuencia de diagnóstico por capítulos, distribuido por edad.')
+    capitulos_edad(df)
+    st.write('En esta representación gráfica, donde vuelven a destacar los mismos capítulos ya mencionados, cabe destacar la disposición estadística de los diagnósticos por edad. Podemos observar una asimetría positiva, donde la media la encontramos en la franja 60-69 años, con mayores valores separados de la media cuanto mayor son los pacientes.')
+    st.title('Frecuencia de diagnóstico por capítulos, distribuido por Raza, Género y Estado Civil.')
+    frecuencia_cap_raza(df)
+    subplot_frecuencia_cap_raza_civil_gen(df)
+    st.write('De esta composición de gráficos se puede extraer conclusiones claras. Las distribuciones son simétricas en todos los capítulos, permitiendo concluir que la raza predominante en el estudio es la blanca, seguida por la asiática y, en último lugar, la afroamericana. Además, las personas casadas son las que presentan un mayor número de enfermedades diagnosticadas, seguidas de cerca por las personas solteras, y, como se mencionó anteriormente, en todos los casos las mujeres presentan cifras superiores a las de los hombres.')
+    st.title('Frecuencia de diagnóstico por capítulos, distribuido por Edad y Estado Civil.')
+    box_plot_edad_cap_civil(df)
+    st.write('Por último, nos enfocamos en el estado civil desglosado por edad para cada uno de los capítulos. En este caso, resulta especialmente interesante centrarnos en los divorciados, ya que presentan las mayores desviaciones respecto a la media total. Destacamos el capítulo 12, enfermedades de la piel y el tejido subcutáneo, donde los divorciados sobresalen a la baja, sin presentar ningún caso por encima de los 90 años. En cambio, en los capítulos 10, enfermedades del aparato respiratorio; 16, ciertas afecciones originadas en el periodo perinatal; y 17, malformaciones congénitas, deformidades y anomalías cromosómicas, los divorciados también destacan, pero en este caso al alza, mostrando las mayores edades y, por tanto, una mayor tasa de supervivencia.')
+    st.write('Como conclusión general del estudio podemos afirmar que los mayores riesgos están presentes en las mujeres, blancas, casadas o solteras, con una edad media de detección en la década de los 60. Siendo la mayor intensidad de casos localizados en el capítulo 2 Neoplasias (tumores y cáncer), así como en el capítulo 13, las enfermedades del sistema osteomuscular y del tejido conectivo, aunque ambos presentan una tasa de supervivencia positiva. En cambio, capítulos con una menor frecuencia, y por tanto, posiblemente también relacionado con una mayor mortalidad, podemos afirmar que son el capítulo 12, enfermedades de la piel y el tejido subcutáneo, el capítulo 18, Síntomas, signos y hallazgos anormales clínicos y de laboratorio, y el capítulo 20, Causas externas de morbilidad y de mortalidad, ya que son los que presentan unas franjas de edad más restringidas. Es decir, en esos casos, aunque muy escasos, la detección es más tardía y la franja de edad máxima suele ser menor en comparación con otros capítulos.')
+    st.write('A continuación se muestra en detalle cada uno de los capítulos con la frecuencia de detección de cada uno de sus subcódigos, destacando los 10 más frecuentes así como la evolución del principal subcódigo a lo largo del tiempo.')
+    bar_plot_diagnosis_code(df)
+    top10_cap2(df)
+    #top10_capX(df)
+    #line_plot_admissions_over_time(df)
+    leucemia_tiempo(df)
 
-    # # Paso 1: Cargar datos y preprocesar
-    # st.header("Cargar y preprocesar datos")
-
-    # # Cargar processed_data_with_diagnosis.csv
-    # uploaded_file = st.file_uploader("Subir archivo CSV con los datos", type="csv")
-
-    # if uploaded_file is not None:
-    #     data = pd.read_csv(uploaded_file)
-
-    #     # Limpieza básica y manejo de datos faltantes
-    #     data.dropna(inplace=True)
-
-    #     st.write("Datos cargados y preprocesados:")
-    #     st.write(data.head())
-
-    #     # Paso 2: Seleccionar características y objetivo
-    #     features = ['PatientGender', 'Age', 'PatientRace', 'CBC: ABSOLUTE LYMPHOCYTES', 'CBC: ABSOLUTE NEUTROPHILS',
-    #                 'CBC: BASOPHILS', 'CBC: EOSINOPHILS', 'CBC: HEMATOCRIT', 'CBC: HEMOGLOBIN', 'CBC: LYMPHOCYTES',
-    #                 'CBC: MCH', 'CBC: MCHC', 'CBC: MEAN CORPUSCULAR VOLUME', 'CBC: MONOCYTES', 'CBC: NEUTROPHILS',
-    #                 'CBC: PLATELET COUNT', 'CBC: RDW', 'CBC: RED BLOOD CELL COUNT', 'CBC: WHITE BLOOD CELL COUNT',
-    #                 'METABOLIC: ALBUMIN', 'METABOLIC: ALK PHOS', 'METABOLIC: ALT/SGPT', 'METABOLIC: ANION GAP',
-    #                 'METABOLIC: AST/SGOT', 'METABOLIC: BILI TOTAL', 'METABOLIC: BUN', 'METABOLIC: CALCIUM',
-    #                 'METABOLIC: CARBON DIOXIDE', 'METABOLIC: CHLORIDE', 'METABOLIC: CREATININE', 'METABOLIC: GLUCOSE',
-    #                 'METABOLIC: POTASSIUM', 'METABOLIC: SODIUM', 'METABOLIC: TOTAL PROTEIN', 'URINALYSIS: PH',
-    #                 'URINALYSIS: RED BLOOD CELLS', 'URINALYSIS: SPECIFIC GRAVITY', 'URINALYSIS: WHITE BLOOD CELLS']
-
-    #     target_code = 'PrimaryDiagnosisCode_y'
-    #     target_description = 'PrimaryDiagnosisDescription_y'
-
-    #     # Paso 3: Dividir en conjunto de entrenamiento y prueba
-    #     X = data[features]
-    #     y_code = data[target_code]
-    #     y_description = data[target_description]
-
-    #     X_train, X_test, y_train_code, y_test_code = train_test_split(X, y_code, test_size=0.2, random_state=42)
-    #     _, _, y_train_description, y_test_description = train_test_split(X, y_description, test_size=0.2, random_state=42)
-
-    #     # Paso 4: Codificación One-Hot de características categóricas
-    #     X_train_encoded = pd.get_dummies(X_train)
-    #     X_test_encoded = pd.get_dummies(X_test)
-
-    #     # Asegurar que X_train y X_test tengan las mismas columnas después de la codificación
-    #     missing_cols = set(X_train_encoded.columns) - set(X_test_encoded.columns)
-    #     for col in missing_cols:
-    #         X_test_encoded[col] = 0
-    #     X_test_encoded = X_test_encoded[X_train_encoded.columns]
-
-    #     # Paso 5: Entrenar un modelo (Random Forest Classifier)
-    #     st.header("Entrenar el modelo")
-    #     model_code = RandomForestClassifier(random_state=42)
-    #     model_code.fit(X_train_encoded, y_train_code)
-
-    #     model_description = RandomForestClassifier(random_state=42)
-    #     model_description.fit(X_train_encoded, y_train_description)
-
-    #     # Paso 6: Evaluar el modelo
-    #     st.header("Evaluar el modelo")
-    #     # TO-DO
-
-    #     # Paso 7: Predicción de nuevos datos (ejemplo)
-    #     st.header("Predicción de nuevos datos")
-    #     X_new = pd.DataFrame({
-    #         'PatientGender': ['Male'],
-    #         'Age': [103],
-    #         'PatientRace': ['Asian'],
-    #         'CBC: ABSOLUTE LYMPHOCYTES': [29.6],
-    #         'CBC: ABSOLUTE NEUTROPHILS': [67.5],
-    #         'CBC: BASOPHILS': [0.1],
-    #         'CBC: EOSINOPHILS': [0.2],
-    #         'CBC: HEMATOCRIT': [40.7],
-    #         'CBC: HEMOGLOBIN': [15.9],
-    #         'CBC: LYMPHOCYTES': [4.7],
-    #         'CBC: MCH': [38.9],
-    #         'CBC: MCHC': [30.2],
-    #         'CBC: MEAN CORPUSCULAR VOLUME': [97.5],
-    #         'CBC: MONOCYTES': [0.2],
-    #         'CBC: NEUTROPHILS': [8.4],
-    #         'CBC: PLATELET COUNT': [305.3],
-    #         'CBC: RDW': [10.4],
-    #         'CBC: RED BLOOD CELL COUNT': [5.6],
-    #         'CBC: WHITE BLOOD CELL COUNT': [11.6],
-    #         'METABOLIC: ALBUMIN': [3.3],
-    #         'METABOLIC: ALK PHOS': [44.8],
-    #         'METABOLIC: ALT/SGPT': [39.9],
-    #         'METABOLIC: ANION GAP': [8.4],
-    #         'METABOLIC: AST/SGOT': [14.7],
-    #         'METABOLIC: BILI TOTAL': [0.3],
-    #         'METABOLIC: BUN': [17.1],
-    #         'METABOLIC: CALCIUM': [8.7],
-    #         'METABOLIC: CARBON DIOXIDE': [25.5],
-    #         'METABOLIC: CHLORIDE': [109.1],
-    #         'METABOLIC: CREATININE': [0.6],
-    #         'METABOLIC: GLUCOSE': [110.5],
-    #         'METABOLIC: POTASSIUM': [5.3],
-    #         'METABOLIC: SODIUM': [146.6],
-    #         'METABOLIC: TOTAL PROTEIN': [6.4],
-    #         'URINALYSIS: PH': [5.5],
-    #         'URINALYSIS: RED BLOOD CELLS': [2.2],
-    #         'URINALYSIS: SPECIFIC GRAVITY': [1.0],
-    #         'URINALYSIS: WHITE BLOOD CELLS': [0.2]
-    #     })
-
-    #     st.subheader("Datos de entrada para la predicción")
-    #     st.write(X_new)
-
-    #     # Codificar las características categóricas de X_new
-    #     X_new_encoded = pd.get_dummies(X_new)
-
-    #     # Asegurar que X_new_encoded tenga las mismas columnas que X_train_encoded
-    #     missing_cols_new = set(X_train_encoded.columns) - set(X_new_encoded.columns)
-    #     for col in missing_cols_new:
-    #         X_new_encoded[col] = 0
-    #     X_new_encoded = X_new_encoded[X_train_encoded.columns]
-
-    #     # Realizar predicciones
-    #     predicted_code = model_code.predict(X_new_encoded)
-    #     predicted_description = model_description.predict(X_new_encoded)
-
-    #     st.subheader("Predicción para los nuevos datos:")
-    #     st.write("Predicted PrimaryDiagnosisCode_y:", predicted_code[0])
-    #     st.write("Predicted PrimaryDiagnosisDescription_y:", predicted_description[0])
-    
-    
-    
-    # Título de la aplicación
-    st.title("Streamlit de 100 pacientes")
-
-    # Carga el archivo PKL usando Streamlit
-    with open("model_100_tests.pkl", "br") as file:
-        model = pickle.load(file)
-    with open("x_scaler.pkl", "br") as file:
-        scaler = pickle.load(file)
-
-
-    
-    df = pd.read_csv("merged_df.csv")
-
-    # SelectBox
-    columnas = ['Age', 'CBC: ABSOLUTE LYMPHOCYTES (%)', 'CBC: ABSOLUTE NEUTROPHILS (%)', 
-                        'CBC: BASOPHILS (k/cumm)', 'CBC: EOSINOPHILS (k/cumm)', 'CBC: HEMATOCRIT (%)', 'CBC: HEMOGLOBIN (gm/dl)', 
-                        'CBC: LYMPHOCYTES (k/cumm)', 'CBC: MCH (pg)', 'CBC: MCHC (g/dl)', 'CBC: MEAN CORPUSCULAR VOLUME (fl)', 
-                        'CBC: MONOCYTES (k/cumm)', 'CBC: NEUTROPHILS (k/cumm)', 'CBC: PLATELET COUNT (k/cumm)', 'CBC: RDW (%)', 
-                        'CBC: RED BLOOD CELL COUNT (m/cumm)', 'CBC: WHITE BLOOD CELL COUNT (k/cumm)', 'METABOLIC: ALBUMIN (gm/dL)',
-                        'METABOLIC: ALK PHOS (U/L)', 'METABOLIC: ALT/SGPT (U/L)', 'METABOLIC: ANION GAP (mmol/L)',
-                        'METABOLIC: AST/SGOT (U/L)', 'METABOLIC: BILI TOTAL (mg/dL)', 'METABOLIC: BUN (mg/dL)', 
-                        'METABOLIC: CALCIUM (mg/dL)', 'METABOLIC: CARBON DIOXIDE (mmol/L)', 
-                        'METABOLIC: CHLORIDE (mmol/L)', 'METABOLIC: CREATININE (mg/dL)',
-                        'METABOLIC: GLUCOSE (mg/dL)', 'METABOLIC: POTASSIUM (mmol/L)', 'METABOLIC: SODIUM (mmol/L)', 
-                        'METABOLIC: TOTAL PROTEIN (gm/dL)', 'URINALYSIS: PH (no unit)',
-                        'URINALYSIS: RED BLOOD CELLS (rbc/hpf)', 'URINALYSIS: SPECIFIC GRAVITY (no unit)', 
-                        'URINALYSIS: WHITE BLOOD CELLS (wbc/hpf)']
-    
-    
-    
-    
-    choice = st.multiselect(label = "Modulo", options = columnas, max_selections = 2, default = columnas[:2])
-    choice_color = st.multiselect(label = "Modulo", options = columnas, max_selections = 1, default = columnas[:1])
-    st.write(f"Columnas: {choice}")
-    
-    
-    st.write(f"{choice[0]} vs {choice[1]}")
-    fig, ax = plt.subplots()
-    scatter = ax.scatter(x=df[choice[0]], y=df[choice[1]], alpha=0.7)
-    plt.title(f" {choice[0]} vs {choice[1]}")
-    plt.xlabel(choice[0])
-    plt.ylabel(choice[1])
-    # Añadir una leyenda
-    legend1 = ax.legend(*scatter.legend_elements(), title="Prueba")
-    ax.add_artist(legend1)
-    st.pyplot(fig)
-    
-    # Gráfico de conteo con Seaborn
-    st.write("Prueba")
-    fig = plt.figure()
-    sns.countplot(x=df["'CBC: HEMATOCRIT (%)'"], palette="viridis")
-    plt.title("Distribución de 'CBC: HEMATOCRIT (%)'")
-    st.pyplot(fig)
-    
-    
-
-    fig_bar = px.bar(data_frame = df,
-                    x          = choice[0],
-                    y          = choice[1],
-                    color      = choice_color[0]
-                    )
-    st.plotly_chart(figure_or_data = fig_bar)
+    #line_plot_admissions_trend(df)
 
 
 if __name__ == "__main__":
